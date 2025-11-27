@@ -7,9 +7,18 @@ class pegawai(models.Model):
   shift = models.CharField(max_length=100)
   gaji_per_jam = models.IntegerField()
   jam_kerja = models.IntegerField(default=0) 
-  bonus_per_minuman = models.IntegerField(default=0) 
-  miuman_terjual = models.IntegerField(default=0) 
-  jenis = models.CharField(max_length=50)
+
+  def hitung_gaji(self):
+    return self.jam_kerja * self.gaji_per_jam
 
   def __str__(self):
-    return f"{self.nama} - {self.posisi}"
+    return {self.nama}
+  
+class barista(pegawai):
+  bonus_per_minuman = models.IntegerField(default=0)
+  miuman_terjual = models.IntegerField(default=0) 
+
+  def hitung_gaji(self):
+    gaji_dasar =  super().hitung_gaji()
+    return gaji_dasar + (self.miuman_terjual * self.bonus_per_minuman)
+  
