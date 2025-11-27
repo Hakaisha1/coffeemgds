@@ -54,19 +54,25 @@ class TransaksiPembelian:
     
 
 
+
 class Gudang:
-    def __init__(self, db_name="logistik_kopi.db"):
+    def __init__(self, db_name=r"E:\ngoding\coffeemgds\logistic\logistik_kopi.db"):
         self.db_name = db_name
         self.connection = None
         self.connect()
         self.create_table()
 
+
+
     def connect(self):
         try:
+            import os
             self.connection = sqlite3.connect(self.db_name)
             print("Koneksi SQLite berhasil!")
+            print("Database yang dipakai:", os.path.abspath(self.db_name))
         except Exception as e:
             print(f"Error saat koneksi: {e}")
+
 
     def create_table(self):
         if self.connection is None:
@@ -160,10 +166,9 @@ class Gudang:
 
 
 
-g = Gudang()
-
 # Menu interaktif
 if __name__ == "__main__":
+    g = Gudang()
     try:
         while True:
             print("\n" + "="*50)
