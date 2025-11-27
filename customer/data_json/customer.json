@@ -1,0 +1,20 @@
+{
+    "saldo": {
+        "ais": 190000
+    },
+    "riwayat": [
+        {
+            "customer": "ais",
+            "saldo_awal": 210000,
+            "total_belanja": 20000,
+            "saldo_akhir": 190000,
+            "pesanan": [
+                {
+                    "menu": "Espresso",
+                    "jumlah": 1,
+                    "subtotal": 20000
+                }
+            ]
+        }
+    ]
+}
