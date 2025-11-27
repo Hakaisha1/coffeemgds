@@ -1,5 +1,54 @@
-import json
+import sqlite3
 import os
+
+
+class Database:
+    def __init__(self):
+        self.conn = sqlite3.connect("customer.db")
+        self.cursor = self.conn.cursor()
+        self.setup()
+
+    def setup(self):
+        # Tabel customer
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS customer (
+                nama TEXT PRIMARY KEY,
+                saldo INTEGER DEFAULT 0
+            )
+        """)
+
+        # Tabel riwayat top up & belanja
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS riwayat (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer TEXT,
+                jenis TEXT,
+                saldo_awal INTEGER,
+                perubahan INTEGER,
+                total_belanja INTEGER,
+                saldo_akhir INTEGER
+            )
+        """)
+
+        # Tabel detail pesanan (jika jenis = pembelian)
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pesanan_detail (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                riwayat_id INTEGER,
+                menu TEXT,
+                jumlah INTEGER,
+                subtotal INTEGER
+            )
+        """)
+
+        self.conn.commit()
+
+    def close(self):
+        self.conn.close()
+
+
+db = Database()
+
 
 class MenuItem:
     def __init__(self, nama, harga):
@@ -8,6 +57,7 @@ class MenuItem:
 
     def __str__(self):
         return f"{self.nama} - Rp{self.harga:,}"
+
 
 class Pesanan:
     def __init__(self, customer):
@@ -20,175 +70,131 @@ class Pesanan:
         self.daftar_pesanan.append((item, jumlah, subtotal))
         self.total += subtotal
 
-    def tampilkan_pesanan(self):
+    def tampilkan(self):
         print("\n=== Detail Pesanan ===")
         for item, jumlah, subtotal in self.daftar_pesanan:
             print(f"{item.nama} (x{jumlah}) = Rp{subtotal:,}")
         print(f"Total: Rp{self.total:,}")
 
-    def hitung_total(self):
-        return self.total
-
-class Riwayat:
-    def __init__(self, entries=None):
-        self.entries = entries.copy() if entries else []
-
-    def add_topup(self, customer, awal, jumlah, akhir):
-        entry = {
-            "jenis": "top up",
-            "customer": customer,
-            "saldo_awal": awal,
-            "perubahan": jumlah,
-            "saldo_akhir": akhir
-        }
-        self.entries.append(entry)
-
-    def add_pembelian(self, customer, awal, total_belanja, akhir, pesanan_list):
-        entry = {
-            "jenis": "pembelian",
-            "customer": customer,
-            "saldo_awal": awal,
-            "total_belanja": total_belanja,
-            "saldo_akhir": akhir,
-            "pesanan": pesanan_list
-        }
-        self.entries.append(entry)
-
-    def get_for(self, customer):
-        return [e for e in self.entries if e.get("customer") == customer]
-
-    def to_list(self):
-        return self.entries
 
 class Customer:
     def __init__(self, nama):
         self.nama = nama
-        self.file_json = "customer.json"
-        self.data = self.load_data()
 
-        self.saldo = self.data.get("saldo", {})
-        self.riwayat = Riwayat(self.data.get("riwayat", []))
+        # Cek apakah customer sudah ada
+        db.cursor.execute("SELECT saldo FROM customer WHERE nama=?", (nama,))
+        data = db.cursor.fetchone()
 
-        # Jika customer baru → saldo mulai 0
-        if self.nama not in self.saldo:
-            self.saldo[self.nama] = 0
-            self.simpan_data()
+        if data is None:
+            # customer baru → buat record
+            db.cursor.execute("INSERT INTO customer (nama, saldo) VALUES (?, ?)", (nama, 0))
+            db.conn.commit()
+            self.saldo = 0
+        else:
+            self.saldo = data[0]
 
-    def load_data(self):
-        if not os.path.exists(self.file_json):
-            return {"saldo": {}, "riwayat": []}
-        with open(self.file_json, "r") as f:
-            try:
-                return json.load(f)
-            except json.JSONDecodeError:
-            
-                return {"saldo": {}, "riwayat": []}
 
-    def simpan_data(self):
-        with open(self.file_json, "w") as f:
-            json.dump({"saldo": self.saldo, "riwayat": self.riwayat.to_list()}, f, indent=4)
+    def update_saldo(self, jumlah):
+        self.saldo = jumlah
+        db.cursor.execute("UPDATE customer SET saldo=? WHERE nama=?", (self.saldo, self.nama))
+        db.conn.commit()
 
-    
+
     def top_up(self):
-        print(f"\nSaldo Anda sekarang: Rp{self.saldo[self.nama]:,}")
+        print(f"\nSaldo Anda sekarang: Rp{self.saldo:,}")
         try:
             jumlah = int(input("Masukkan jumlah top up: Rp"))
-            if jumlah > 0:
-                saldo_awal = self.saldo[self.nama]
-                self.saldo[self.nama] += jumlah
-                saldo_akhir = self.saldo[self.nama]
+            if jumlah <= 0:
+                print("Jumlah tidak boleh 0.")
+                return
 
-                self.riwayat.add_topup(self.nama, saldo_awal, jumlah, saldo_akhir)
-                self.simpan_data()
+            saldo_awal = self.saldo
+            saldo_akhir = saldo_awal + jumlah
 
-                print(f"Top up berhasil! Saldo Anda kini: Rp{self.saldo[self.nama]:,}")
-            else:
-                print("Jumlah harus lebih dari 0.")
+            # simpan
+            db.cursor.execute("""
+                INSERT INTO riwayat (customer, jenis, saldo_awal, perubahan, saldo_akhir)
+                VALUES (?, ?, ?, ?, ?)
+            """, (self.nama, "top up", saldo_awal, jumlah, saldo_akhir))
+            db.conn.commit()
+
+            self.update_saldo(saldo_akhir)
+
+            print(f"Top up berhasil! Saldo sekarang: Rp{self.saldo:,}")
+
         except ValueError:
-            print("Masukkan angka yang valid.")
+            print("Masukkan angka valid.")
 
-    def bayar_pakai_saldo(self, total, daftar_pesanan):
-        if self.saldo[self.nama] >= total:
-            saldo_awal = self.saldo[self.nama]
-            self.saldo[self.nama] -= total
-            saldo_akhir = self.saldo[self.nama]
 
-            pesanan_list = [
-                {"menu": item.nama, "jumlah": jumlah, "subtotal": subtotal}
-                for item, jumlah, subtotal in daftar_pesanan
-            ]
+    def bayar(self, total, daftar_pesanan):
+        if self.saldo < total:
+            return False
 
-            self.riwayat.add_pembelian(self.nama, saldo_awal, total, saldo_akhir, pesanan_list)
-            self.simpan_data()
+        saldo_awal = self.saldo
+        saldo_akhir = saldo_awal - total
 
-            print("\nPembayaran berhasil menggunakan saldo!")
-            print(f"Sisa saldo: Rp{self.saldo[self.nama]:,}")
-            return True
-        return False
+        # Simpan ke riwayat (jenis pembelian)
+        db.cursor.execute("""
+            INSERT INTO riwayat (customer, jenis, saldo_awal, total_belanja, saldo_akhir)
+            VALUES (?, ?, ?, ?, ?)
+        """, (self.nama, "pembelian", saldo_awal, total, saldo_akhir))
+        riwayat_id = db.cursor.lastrowid
 
-    # Lihat riwayat (format aman tidak error)
+        # Simpan detail pesanan
+        for item, jumlah, subtotal in daftar_pesanan:
+            db.cursor.execute("""
+                INSERT INTO pesanan_detail (riwayat_id, menu, jumlah, subtotal)
+                VALUES (?, ?, ?, ?)
+            """, (riwayat_id, item.nama, jumlah, subtotal))
+
+        db.conn.commit()
+
+        # Update saldo customer
+        self.update_saldo(saldo_akhir)
+
+        print("\nPembayaran berhasil!")
+        print(f"Sisa saldo: Rp{self.saldo:,}")
+        return True
+
+
     def lihat_riwayat(self):
-        print("\n=== Riwayat Transaksi & Saldo ===")
+        print("\n=== RIWAYAT TRANSAKSI ===")
 
-        data = self.riwayat.get_for(self.nama)
+        db.cursor.execute("SELECT * FROM riwayat WHERE customer=?", (self.nama,))
+        data = db.cursor.fetchall()
 
         if not data:
             print("Belum ada riwayat.")
             return
 
-        for i, transaksi in enumerate(data, 1):
+        for i, r in enumerate(data, 1):
+            (id_, customer, jenis, saldo_awal, perubahan,
+             total_belanja, saldo_akhir) = r
+
             print(f"\n--- Transaksi {i} ---")
-
-            jenis = transaksi.get("jenis", "pembelian")
             print(f"Jenis        : {jenis}")
+            print(f"Saldo Awal   : Rp{saldo_awal:,}")
 
-            saldo_awal = transaksi.get("saldo_awal", 0)
-            saldo_akhir = transaksi.get("saldo_akhir", saldo_awal)
-
-            print(f"Saldo awal   : Rp{saldo_awal:,}")
-            # jika top up
             if jenis == "top up":
-                perubahan = transaksi.get("perubahan", 0)
-                print(f"Top up       : Rp{perubahan:,}")
-                print(f"Saldo akhir  : Rp{saldo_akhir:,}")
-            # jika pembelian
-            elif jenis == "pembelian":
-                total_belanja = transaksi.get("total_belanja", 0)
-                print(f"Total belanja: Rp{total_belanja:,}")
-                print(f"Saldo akhir  : Rp{saldo_akhir:,}")
-                print("Detail pesanan:")
-                for item in transaksi.get("pesanan", []):
-                    print(f" - {item.get('menu','?')} x{item.get('jumlah',0)} = Rp{item.get('subtotal',0):,}")
+                print(f"Top Up       : Rp{(perubahan or 0):,}")
             else:
-                # fallback untuk jenis yg tak dikenali
-                print("Detail transaksi tidak dikenal.")
-                print(f"Saldo akhir  : Rp{saldo_akhir:,}")
+                print(f"Total Belanja: Rp{(total_belanja or 0):,}")
 
-    # Cetak struk
-    def cetak_struk(self, daftar_pesanan, total):
-        print("\n===================================")
-        print("               STRUK")
-        print("===================================")
-        print(f"Customer : {self.nama}")
+                # Detail pesanan
+                print("Detail Pesanan:")
+                db.cursor.execute("SELECT menu, jumlah, subtotal FROM pesanan_detail WHERE riwayat_id=?", (id_,))
+                items = db.cursor.fetchall()
+                for m, j, s in items:
+                    print(f" - {m} x{j} = Rp{s:,}")
 
-        print("\nPesanan:")
-        for item, jumlah, subtotal in daftar_pesanan:
-            print(f"- {item.nama} x{jumlah} = Rp{subtotal:,}")
+            print(f"Saldo Akhir  : Rp{saldo_akhir:,}")
 
-        print("\n-----------------------------------")
-        print(f"TOTAL = Rp{total:,}")
-        print("-----------------------------------")
-        print("Terima kasih telah berkunjung!")
-        print("===================================\n")
 
-    # Proses pemesanan
-    def buat_pesanan(self, daftar_menu):
+    def buat_pesanan(self, menu):
         pesanan = Pesanan(self)
 
-        print(f"\nSelamat datang, {self.nama}!")
-        print(f"Saldo Anda: Rp{self.saldo[self.nama]:,}")
-        print("\n=== Menu Restoran ===")
-        for i, item in enumerate(daftar_menu, 1):
+        print("\n=== MENU ===")
+        for i, item in enumerate(menu, 1):
             print(f"{i}. {item}")
 
         while True:
@@ -196,70 +202,56 @@ class Customer:
                 pilih = int(input("\nPilih menu (0 untuk selesai): "))
                 if pilih == 0:
                     break
-                if 1 <= pilih <= len(daftar_menu):
+                if 1 <= pilih <= len(menu):
                     jumlah = int(input("Jumlah: "))
-                    pesanan.tambah_item(daftar_menu[pilih - 1], jumlah)
-                    print("Item ditambahkan!")
-                else:
-                    print("Menu tidak valid.")
-            except ValueError:
-                print("Masukkan angka valid.")
+                    pesanan.tambah_item(menu[pilih - 1], jumlah)
+                    print("Ditambahkan!")
+            except:
+                print("Input tidak valid.")
 
         if not pesanan.daftar_pesanan:
             print("Tidak ada pesanan.")
             return
 
-        pesanan.tampilkan_pesanan()
-        total = pesanan.total
+        pesanan.tampilkan()
 
-        print(f"\nTotal tagihan: Rp{total:,}")
-        print(f"Saldo Anda: Rp{self.saldo[self.nama]:,}")
+        if self.bayar(pesanan.total, pesanan.daftar_pesanan):
+            print("\n=== STRUK ===")
+            for item, jumlah, subtotal in pesanan.daftar_pesanan:
+                print(f"{item.nama} x{jumlah} = Rp{subtotal:,}")
+            print(f"TOTAL = Rp{pesanan.total:,}")
 
-        # Bayar pakai saldo
-        if self.bayar_pakai_saldo(total, pesanan.daftar_pesanan):
-            self.cetak_struk(pesanan.daftar_pesanan, total)
-            return
-
-        # Jika saldo kurang → wajib top up
-        print("\nSaldo tidak cukup. Silakan top up.\n")
-        self.top_up()
-
-        # Coba bayar lagi
-        if self.bayar_pakai_saldo(total, pesanan.daftar_pesanan):
-            self.cetak_struk(pesanan.daftar_pesanan, total)
-        else:
-            print("Saldo tetap tidak cukup. Pesanan dibatalkan.")
 
 
 if __name__ == "__main__":
-    daftar_menu = [
+    menu = [
         MenuItem("Espresso", 20000),
         MenuItem("Ice Cafe Latte", 25000),
-        MenuItem("Cappucino", 23000),
+        MenuItem("Cappuccino", 23000),
         MenuItem("Matcha Latte", 27500),
         MenuItem("Butterscotch Coffee", 32000)
     ]
 
     nama = input("Masukkan nama customer: ")
-    pelanggan = Customer(nama)
+    cust = Customer(nama)
 
     while True:
         print("\n=== MENU UTAMA ===")
         print("1. Buat Pesanan")
         print("2. Lihat Riwayat")
-        print("3. Top Up Saldo")
+        print("3. Top Up")
         print("0. Keluar")
 
-        pilihan = input("Pilih menu: ")
+        pilih = input("Pilih menu: ")
 
-        if pilihan == "1":
-            pelanggan.buat_pesanan(daftar_menu)
-        elif pilihan == "2":
-            pelanggan.lihat_riwayat()
-        elif pilihan == "3":
-            pelanggan.top_up()
-        elif pilihan == "0":
-            print("Program selesai. Terima kasih!")
+        if pilih == "1":
+            cust.buat_pesanan(menu)
+        elif pilih == "2":
+            cust.lihat_riwayat()
+        elif pilih == "3":
+            cust.top_up()
+        elif pilih == "0":
+            print("Terima kasih!")
             break
         else:
             print("Pilihan tidak valid.")
